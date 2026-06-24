@@ -791,9 +791,22 @@ class MasterService {
     // evict ratio target. If the actual evicted ratio is less than
     // evict_ratio_lowerbound, the second pass will be triggered and try to
     // fulfill evict ratio lowerbound.
+    //
+    // CMS Frequency-Aware Eviction: When promotion_sketch_ is available, the
+    // effective lease timeout is boosted by the CMS access frequency count.
+    // Hot objects (high CMS count) get a virtual lease extension, making them
+    // less likely to be evicted than cold objects with the same real lease
+    // timeout. This is a novel use of CountMinSketch for eviction tuning.
     void BatchEvict(double evict_ratio_target, double evict_ratio_lowerbound);
     void NoFBatchEvict(double evict_ratio_target,
                        double evict_ratio_lowerbound);
+
+    // Compute a frequency-adjusted lease timeout for eviction selection.
+    // Uses CMS count (if available) to extend the effective lease of
+    // frequently-accessed objects, biasing eviction toward cold objects.
+    std::chrono::system_clock::time_point AdjustLeaseTimeoutWithFrequency(
+        const std::string& tenant_id, const std::string& key,
+        std::chrono::system_clock::time_point lease_timeout) const;
     struct TenantQuotaEvictionResult {
         uint64_t freed_bytes{0};
         uint64_t evicted_objects{0};
