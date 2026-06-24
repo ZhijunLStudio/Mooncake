@@ -952,6 +952,10 @@ std::optional<std::shared_ptr<Client>> Client::Create(
 
 tl::expected<void, ErrorCode> Client::Get(const std::string& object_key,
                                           std::vector<Slice>& slices) {
+    // Flush deferred PutEnds so recently-written keys are visible to readers.
+    // Without this, keys written within the last batch window (up to 32 PUTs)
+    // would be in PROCESSING state and not found by GetReplicaList.
+    FlushPendingPutEnds();
     auto query_result = Query(object_key);
     if (!query_result) {
         return tl::unexpected(query_result.error());
@@ -962,6 +966,8 @@ tl::expected<void, ErrorCode> Client::Get(const std::string& object_key,
 std::vector<tl::expected<void, ErrorCode>> Client::BatchGet(
     const std::vector<std::string>& object_keys,
     std::unordered_map<std::string, std::vector<Slice>>& slices) {
+    // Flush deferred PutEnds so recently-written keys are visible
+    FlushPendingPutEnds();
     auto batched_query_results = BatchQuery(object_keys);
 
     // If any queries failed, return error results immediately for failed
@@ -3034,12 +3040,16 @@ tl::expected<void, ErrorCode> Client::unregisterLocalMemory(
 }
 
 tl::expected<bool, ErrorCode> Client::IsExist(const std::string& key) {
+    // Flush deferred PutEnds so recently-written keys are visible
+    FlushPendingPutEnds();
     auto result = master_client_.ExistKey(key);
     return result;
 }
 
 std::vector<tl::expected<bool, ErrorCode>> Client::BatchIsExist(
     const std::vector<std::string>& keys) {
+    // Flush deferred PutEnds so recently-written keys are visible
+    FlushPendingPutEnds();
     auto response = master_client_.BatchExistKey(keys);
 
     // Check if we got the expected number of responses
