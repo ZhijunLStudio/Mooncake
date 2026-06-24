@@ -1024,12 +1024,16 @@ Client::BatchQueryIp(const std::vector<UUID>& client_ids) {
 tl::expected<std::unordered_map<std::string, std::vector<Replica::Descriptor>>,
              ErrorCode>
 Client::QueryByRegex(const std::string& str) {
+    // Flush deferred PutEnds so recently-written keys are visible
+    FlushPendingPutEnds();
     auto result = master_client_.GetReplicaListByRegex(str);
     return result;
 }
 
 tl::expected<QueryResult, ErrorCode> Client::Query(
     const std::string& object_key) {
+    // Flush deferred PutEnds so recently-written keys are visible to readers
+    FlushPendingPutEnds();
     std::chrono::steady_clock::time_point start_time =
         std::chrono::steady_clock::now();
     auto result = master_client_.GetReplicaList(object_key);
@@ -1043,6 +1047,8 @@ tl::expected<QueryResult, ErrorCode> Client::Query(
 
 std::vector<tl::expected<QueryResult, ErrorCode>> Client::BatchQuery(
     const std::vector<std::string>& object_keys) {
+    // Flush deferred PutEnds so recently-written keys are visible
+    FlushPendingPutEnds();
     return BatchQuery(object_keys, master_client_.tenant_id());
 }
 
@@ -2118,21 +2124,27 @@ void Client::FlushPendingPutEnds() {
 
     // Group keys by replica_type for BatchPutEnd
     std::vector<std::string> memory_keys;
+    std::vector<std::string> disk_keys;
+    std::vector<std::string> local_disk_keys;
     std::vector<std::string> nof_keys;
     std::vector<std::string> all_keys;
 
-    for (const auto& [key, rtype] : to_flush) {
+    for (auto& [key, rtype] : to_flush) {
         switch (rtype) {
             case ReplicaType::MEMORY:
-                memory_keys.push_back(key);
+                memory_keys.push_back(std::move(key));
+                break;
+            case ReplicaType::DISK:
+                disk_keys.push_back(std::move(key));
+                break;
+            case ReplicaType::LOCAL_DISK:
+                local_disk_keys.push_back(std::move(key));
                 break;
             case ReplicaType::NOF_SSD:
-                nof_keys.push_back(key);
+                nof_keys.push_back(std::move(key));
                 break;
             case ReplicaType::ALL:
-                all_keys.push_back(key);
-                break;
-            default:
+                all_keys.push_back(std::move(key));
                 break;
         }
     }
@@ -2144,6 +2156,30 @@ void Client::FlushPendingPutEnds() {
             if (!results[i]) {
                 LOG(ERROR) << "Deferred BatchPutEnd(MEMORY) failed for key="
                            << memory_keys[i]
+                           << ": " << toString(results[i].error());
+            }
+        }
+    }
+
+    if (!disk_keys.empty()) {
+        auto results =
+            master_client_.BatchPutEnd(disk_keys, ReplicaType::DISK);
+        for (size_t i = 0; i < results.size(); ++i) {
+            if (!results[i]) {
+                LOG(ERROR) << "Deferred BatchPutEnd(DISK) failed for key="
+                           << disk_keys[i]
+                           << ": " << toString(results[i].error());
+            }
+        }
+    }
+
+    if (!local_disk_keys.empty()) {
+        auto results =
+            master_client_.BatchPutEnd(local_disk_keys, ReplicaType::LOCAL_DISK);
+        for (size_t i = 0; i < results.size(); ++i) {
+            if (!results[i]) {
+                LOG(ERROR) << "Deferred BatchPutEnd(LOCAL_DISK) failed for key="
+                           << local_disk_keys[i]
                            << ": " << toString(results[i].error());
             }
         }

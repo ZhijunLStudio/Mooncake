@@ -235,6 +235,11 @@ inline std::string NormalizeTenantId(const std::string& tenant_id) {
 // (getMetadataShardIndex, getTenantQuotaShardIndex, MakeObjectIdentity, …)
 // to eliminate the string copy that NormalizeTenantId() would otherwise
 // perform on every invocation.
+//
+// WARNING: The returned reference must not outlive the input tenant_id.
+// Passing a temporary string (e.g., NormalizeTenantIdRef(get_temp_str()))
+// creates a dangling reference when the temporary is destroyed at the
+// semicolon. Callers that need an owned string should use NormalizeTenantId().
 inline const std::string& NormalizeTenantIdRef(const std::string& tenant_id) {
     static const std::string kDefaultTenant = "default";
     return tenant_id.empty() ? kDefaultTenant : tenant_id;

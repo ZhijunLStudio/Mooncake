@@ -2768,9 +2768,10 @@ std::vector<tl::expected<void, ErrorCode>> MasterService::BatchPutEnd(
         shard_groups[shard_idx].emplace_back(i, keys[i]);
     }
 
-    // If all keys land in a single shard or there are very few keys,
-    // skip the parallel overhead and process sequentially.
-    if (shard_groups.size() <= 1) {
+    // For small batches, sequential processing is faster than spawning threads.
+    // Only parallelize when there are enough keys across multiple shards.
+    static constexpr size_t kMinBatchParallelKeys = 16;
+    if (shard_groups.size() <= 1 || n < kMinBatchParallelKeys) {
         for (size_t i = 0; i < n; ++i) {
             results[i] = PutEnd(client_id, keys[i], tenant_id, replica_type);
         }
@@ -2816,8 +2817,10 @@ std::vector<tl::expected<void, ErrorCode>> MasterService::BatchPutRevoke(
         shard_groups[shard_idx].emplace_back(i, keys[i]);
     }
 
-    // Single shard or few keys: skip parallel overhead.
-    if (shard_groups.size() <= 1) {
+    // For small batches, sequential processing is faster than spawning threads.
+    // Only parallelize when there are enough keys across multiple shards.
+    static constexpr size_t kMinBatchParallelKeys = 16;
+    if (shard_groups.size() <= 1 || n < kMinBatchParallelKeys) {
         for (size_t i = 0; i < n; ++i) {
             results[i] = PutRevoke(client_id, keys[i], tenant_id, replica_type);
         }
@@ -6736,10 +6739,9 @@ void MasterService::BatchEvict(double evict_ratio_target,
                             }
                             shard_evicted_count += evict_result.evicted_objects;
                         } else {
-                            auto effective_timeout2 = AdjustLeaseTimeoutWithFrequency(
-                                tenant_it->first, it->first,
-                                it->second.lease_timeout);
-                            no_pin_objects.push_back(effective_timeout2);
+                            // Reuse effective_timeout computed above — avoids
+                            // redundant CMS lookup and string allocation.
+                            no_pin_objects.push_back(effective_timeout);
                             ++it;
                         }
                     }

@@ -75,6 +75,13 @@ class CountMinSketch {
 
     // Halve all counters. Protected by a mutex since this is a bulk operation
     // that requires consistency across all cells.
+    //
+    // Note: cell.store(cell.load() >> 1) is a non-atomic RMW. A concurrent
+    // increment() CAS that succeeds between the load and store may be silently
+    // overwritten. This is an intentional trade-off: the Decay-Min Sketch is
+    // inherently approximate, and the alternative (a CAS retry loop per cell
+    // during decay) would livelock under contention. The practical impact is
+    // bounded — at most one increment lost per cell per decay cycle.
     void decay() {
         std::lock_guard<std::mutex> lock(decay_mu_);
         // Only one thread performs decay; others that reached the threshold
@@ -87,14 +94,18 @@ class CountMinSketch {
             cell.store(cell.load(std::memory_order_relaxed) >> 1,
                        std::memory_order_relaxed);
         }
-        total_increments_.store(0, std::memory_order_relaxed);
+        // Use fetch_sub to preserve concurrent increments that arrived during decay.
+        // store(0) would silently erase them, causing counter drift and delayed
+        // subsequent decay cycles. fetch_sub(threshold) subtracts only the increments
+        // accounted for by this decay pass; any extras remain counted.
+        total_increments_.fetch_sub(width_ * depth_, std::memory_order_relaxed);
     }
 
    private:
     static constexpr size_t kDefaultWidth = 4096;
     static constexpr size_t kDefaultDepth = 4;
 
-    size_t hashFromBase(size_t base, size_t seed) const {
+    static size_t hashFromBase(size_t base, size_t seed) {
         size_t h = base;
         h ^= seed * 0x9e3779b97f4a7c15ULL + 0x517cc1b727220a95ULL;
         h ^= (h >> 33);
