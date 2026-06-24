@@ -223,13 +223,26 @@ static constexpr size_t DEFAULT_LOCAL_BUFFER_SIZE = 1024 * 1024 * 16;    // 16MB
 constexpr const char* DEFAULT_PROTOCOL = "tcp";
 constexpr const char* DEFAULT_MASTER_SERVER_ADDR = "127.0.0.1:50051";
 
+// Original: returns a new string (copies when tenant_id is non-empty).
+// Kept for backward compatibility with callers that need an owned string.
 inline std::string NormalizeTenantId(const std::string& tenant_id) {
     return tenant_id.empty() ? "default" : tenant_id;
 }
 
+// Zero-copy variant: returns a const reference that is valid as long as
+// the input `tenant_id` is alive. When the input is empty, returns a
+// reference to a static "default" string. Use this in hot-path callers
+// (getMetadataShardIndex, getTenantQuotaShardIndex, MakeObjectIdentity, …)
+// to eliminate the string copy that NormalizeTenantId() would otherwise
+// perform on every invocation.
+inline const std::string& NormalizeTenantIdRef(const std::string& tenant_id) {
+    static const std::string kDefaultTenant = "default";
+    return tenant_id.empty() ? kDefaultTenant : tenant_id;
+}
+
 inline std::string MakeTenantScopedStorageKey(const std::string& tenant_id,
                                               const std::string& key) {
-    const auto normalized_tenant = NormalizeTenantId(tenant_id);
+    const auto& normalized_tenant = NormalizeTenantIdRef(tenant_id);
     std::string scoped_key;
     scoped_key.reserve(normalized_tenant.size() + key.size() + 1);
     scoped_key.append(normalized_tenant);

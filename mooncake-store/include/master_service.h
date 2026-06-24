@@ -1281,12 +1281,12 @@ class MasterService {
 
     static ObjectIdentity MakeObjectIdentity(const std::string& user_key,
                                              const std::string& tenant_id) {
-        return {NormalizeTenantId(tenant_id), user_key};
+        return {std::string(NormalizeTenantIdRef(tenant_id)), user_key};
     }
 
     static std::string MakeTenantScopedKey(const std::string& tenant_id,
                                            const std::string& key) {
-        const auto normalized_tenant = NormalizeTenantId(tenant_id);
+        const auto& normalized_tenant = NormalizeTenantIdRef(tenant_id);
         std::string scoped_key;
         scoped_key.reserve(normalized_tenant.size() + key.size() + 1);
         scoped_key.append(normalized_tenant);
@@ -1298,7 +1298,7 @@ class MasterService {
     // Helper to get shard index from tenant-scoped object identity.
     size_t getShardIndex(const std::string& tenant_id,
                          const std::string& user_key) const {
-        const auto normalized_tenant = NormalizeTenantId(tenant_id);
+        const auto& normalized_tenant = NormalizeTenantIdRef(tenant_id);
         if (normalized_tenant == "default") {
             return std::hash<std::string>{}(user_key) % kNumShards;
         }
